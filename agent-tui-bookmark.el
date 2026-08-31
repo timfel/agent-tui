@@ -84,25 +84,6 @@
 (add-hook 'agent-tui-started-hook #'agent-tui-bookmark--setup)
 (agent-tui-bookmark--setup-existing-buffers)
 
-(defun agent-tui-bookmark--counsel-transformer (candidate)
-  "Annotate a COUNSEL bookmark CANDIDATE with type and location."
-  (let* ((record (bookmark-get-bookmark-record candidate))
-         (type (or (and record
-                        (bookmark-type-from-full-record (cons candidate record)))
-                   ""))
-         (location (bookmark-location candidate)))
-    (format "%-40s %-14s %s"
-            candidate
-            (propertize (if (string-empty-p type) "file" type)
-                        'face 'font-lock-type-face)
-            (propertize (or location "")
-                        'face 'font-lock-comment-face))))
-
-(with-eval-after-load 'counsel
-  (with-eval-after-load 'ivy
-    (ivy-configure 'counsel-bookmark
-      :display-transformer-fn #'agent-tui-bookmark--counsel-transformer)))
-
 (provide 'agent-tui-bookmark)
 
 ;;; agent-tui-bookmark.el ends here
