@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'cl-lib)
+(require 'seq)
 (require 'subr-x)
 
 (declare-function project-current "project" (&optional maybe-prompt directory))
@@ -55,12 +56,13 @@ The supported values are `ghostel', `vterm', `eat', and `term'."
 (defcustom agent-tui-command-prefix nil
   "Command prefix used when starting an agent TUI.
 
-This is either a string, such as \"direnv exec .\", or a function.  A
-function is called with the current directory as its only argument and must
-return a string.  The returned string is placed before the provider's TUI
-command."
+This is either shell text, an argv list, or a function.  A function is
+called with the current directory as its only argument and must return shell
+text or an argv list.  The resulting command is placed before the provider's
+TUI command."
   :type '(choice (const :tag "No prefix" nil)
-                 (string :tag "String")
+                 (string :tag "Shell text")
+                 (repeat :tag "Argument vector" string)
                  (function :tag "Function"))
   :group 'agent-tui)
 
@@ -166,6 +168,36 @@ such as `(4)' or `(16)'."
               (let ((process (get-buffer-process buffer)))
                 (or (null process) (process-live-p process)))))))
 
+;;;###autoload
+(defun agent-tui-buffers ()
+  "Return active agent-tui buffers in most-recently-used order."
+  (seq-filter #'agent-tui--active-buffer-p (buffer-list)))
+
+;;;###autoload
+(defun agent-tui-cwd (&optional buffer)
+  "Return BUFFER's working directory.
+
+This is the directory inherited by the terminal process.  BUFFER defaults to
+`current-buffer'."
+  (with-current-buffer (or buffer (current-buffer))
+    (file-name-as-directory (expand-file-name default-directory))))
+
+;;;###autoload
+(defun agent-tui-status (&optional buffer)
+  "Return BUFFER's current status.
+
+The result is `busy', `ready', `unknown', or `dead'.  BUFFER defaults to
+`current-buffer'."
+  (setq buffer (or buffer (current-buffer)))
+  (if (not (agent-tui--active-buffer-p buffer))
+      'dead
+    (with-current-buffer buffer
+      (condition-case nil
+          (if (agent-tui-busy? (agent-tui--last-buffer-contents))
+              'busy
+            'ready)
+        (error 'unknown)))))
+
 (defun agent-tui--project-buffers (project root)
   "Return active agent-tui buffers in PROJECT rooted at ROOT, in MRU order."
   (let ((project-buffers (and project (project-buffers project))))
@@ -263,6 +295,21 @@ Return the selected or started terminal buffer."
       ;; Terminal packages are asked only to create a new buffer.  Select it
       ;; here, alongside the existing-buffer selection paths above.
       (agent-tui--select-existing-buffer buffer))))
+
+;;;###autoload
+(defun agent-tui-start-in-directory (provider directory &optional prefix-key sessionid)
+  "Start PROVIDER in DIRECTORY and return its terminal buffer.
+
+This is a convenience for integrations that need to launch a provider without
+relying on the dynamically bound global `agent-tui-provider'."
+  (let* ((directory (agent-tui--directory directory))
+         (default-directory directory)
+         (agent-tui-provider provider))
+    (let ((buffer (agent-tui-start prefix-key sessionid)))
+      (when (buffer-live-p buffer)
+        (with-current-buffer buffer
+          (setq default-directory directory)))
+      buffer)))
 
 ;;;###autoload
 (defun agent-tui-started (buffer)
@@ -419,22 +466,30 @@ This helper is intended for provider implementations."
   (agent-tui--send-return))
 
 (defun agent-tui--command-prefix (directory)
-  "Return the configured command prefix for DIRECTORY."
+  "Return the configured command prefix for DIRECTORY as shell text."
   (let ((prefix (cond ((null agent-tui-command-prefix) nil)
                       ((functionp agent-tui-command-prefix)
                        (funcall agent-tui-command-prefix directory))
-                      ((stringp agent-tui-command-prefix)
+                      ((or (stringp agent-tui-command-prefix)
+                           (listp agent-tui-command-prefix))
                        agent-tui-command-prefix)
                       (t (user-error "Invalid agent-tui-command-prefix: %S"
                                      agent-tui-command-prefix)))))
-    (when prefix
-      (unless (stringp prefix)
-        (user-error "agent-tui command prefix must return a string, got %S"
+    (cond
+     ((null prefix) "")
+     ((stringp prefix)
+      (setq prefix (string-trim-right prefix))
+      (if (string-empty-p prefix) "" (concat prefix " ")))
+     ((listp prefix)
+      (unless (cl-every #'stringp prefix)
+        (user-error "agent-tui command prefix argv must contain strings: %S"
                     prefix))
-      (setq prefix (string-trim-right prefix)))
-    (if (or (null prefix) (string-empty-p prefix))
-        ""
-      (concat prefix " "))))
+      (if prefix
+          (concat (mapconcat #'shell-quote-argument prefix " ") " ")
+        ""))
+     (t
+      (user-error "agent-tui command prefix must return shell text or an argv list, got %S"
+                  prefix)))))
 
 ;;; Busy/idle monitoring
 
@@ -526,10 +581,10 @@ timer object itself."
 
 ;;;###autoload
 (defun agent-tui-enqueue-prompt (string)
-  "Queue STRING for the next idle transition in the current agent TUI.
+  "Send STRING immediately if idle, or queue it while the agent TUI is busy.
 
-When the buffer next becomes idle, STRING is sent to the terminal followed by
-Return.  Multiple queued prompts are sent in queue order at that transition."
+When the buffer is busy, STRING is sent to the terminal after it becomes idle.
+Multiple queued prompts are sent in queue order."
   (interactive "sPrompt: ")
   (unless (stringp string)
     (user-error "Prompt must be a string"))
@@ -538,6 +593,8 @@ Return.  Multiple queued prompts are sent in queue order at that transition."
     (user-error "The current buffer is not an active agent-tui buffer"))
   (setq agent-tui--prompt-queue
         (append agent-tui--prompt-queue (list string)))
+  (unless (agent-tui-busy? (agent-tui--last-buffer-contents))
+    (agent-tui--flush-prompt-queue))
   string)
 
 (provide 'agent-tui)
