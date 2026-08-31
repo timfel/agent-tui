@@ -84,7 +84,7 @@ session ID always resumes that session."
                  (const :tag "Prompt for a session" prompt))
   :group 'agent-tui)
 
-(defcustom agent-tui-session-directory ".agent-tui/sessions"
+(defcustom agent-tui-session-directory ".agent-shell/sessions"
   "Directory in which to record resumable agent TUI session IDs.
 
 The path is relative to the current project root unless it is absolute.  Each
@@ -486,7 +486,7 @@ buffer resumes it.  Return the selected or started terminal buffer."
   "Start PROVIDER in DIRECTORY and return its terminal buffer.
 
 When NO-FOCUS is non-nil, start a fresh buffer without selecting it.  When
-NO-PERSIST is non-nil, do not record its session ID in `.agent-tui'.  This is
+NO-PERSIST is non-nil, do not record its session ID in `.agent-shell'.  This is
 a convenience for integrations that need to launch a provider without relying
 on the dynamically bound global `agent-tui-provider'."
   (let* ((directory (agent-tui--directory directory))

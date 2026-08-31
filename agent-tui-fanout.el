@@ -26,7 +26,7 @@ When nil, use the global `agent-tui-provider'."
   :type '(choice (const :tag "Global provider" nil) symbol)
   :group 'agent-tui-fanout)
 
-(defcustom agent-tui-fanout-worktree-directory ".agent-tui/worktrees"
+(defcustom agent-tui-fanout-worktree-directory ".agent-shell/worktrees"
   "Directory, relative to a repository root, for fan-out worktrees."
   :type 'directory
   :group 'agent-tui-fanout)

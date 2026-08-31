@@ -21,10 +21,10 @@
 
 (defcustom agent-tui-dashboard-search-directories
   (list user-emacs-directory)
-  "Directories searched for `.agent-tui' markers and worktrees.
+  "Directories searched for `.agent-shell' markers and worktrees.
 
 Each search directory and its immediate child directories are checked for an
-`.agent-tui' marker and `.agent-tui/worktrees'."
+`.agent-shell' marker and `.agent-shell/worktrees'."
   :type '(repeat directory)
   :group 'agent-tui-dashboard)
 
@@ -93,7 +93,7 @@ layout used by the agent-shell dashboard."
             (when (file-directory-p base)
               (setq folders
                     (append (agent-tui-dashboard--children base) folders)))
-            (when (file-directory-p (expand-file-name ".agent-tui" candidate))
+            (when (file-directory-p (expand-file-name ".agent-shell" candidate))
               (push candidate folders))))))
     folders))
 
@@ -291,6 +291,8 @@ layout used by the agent-shell dashboard."
     (define-key map (kbd "g") #'agent-tui-dashboard-refresh)
     (define-key map (kbd "R") #'agent-tui-dashboard-rename-buffer)
     (define-key map (kbd "f") #'agent-tui-dashboard-find-file)
+    (define-key map (kbd "C-x f") #'agent-tui-dashboard-find-file)
+    (define-key map (kbd "C-x C-f") #'agent-tui-dashboard-find-file)
     (define-key map (kbd "D") #'agent-tui-dashboard-delete-worktree)
     map)
   "Keymap for `agent-tui-dashboard-mode'.")
@@ -313,13 +315,13 @@ layout used by the agent-shell dashboard."
   "Major mode for the agent TUI dashboard."
   (setq tabulated-list-format
         [ ("A" 2 nil)
-          ("Folder" 40 t)
+          ("Folder" 72 t)
           ("Branch" 24 t)
           ("Title" 0 t)])
   (setq tabulated-list-padding 2
         tabulated-list-sort-key nil)
   (setq-local header-line-format
-              "RET: visit  g: refresh  R: rename  f: find file  D: delete worktree")
+              "RET: visit  g: refresh  R: rename  f/C-x f/C-x C-f: find file  D: delete worktree")
   (setq-local revert-buffer-function
               (lambda (_ignore _noconfirm)
                 (agent-tui-dashboard--refresh)))
