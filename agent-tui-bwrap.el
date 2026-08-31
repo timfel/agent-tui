@@ -114,29 +114,24 @@ Set to nil to disable cleanup."
     ("~/.config/rclone" . nil))
   "Paths that `agent-shell' bwrap sessions should bind."
   :type '(repeat (cons (string :tag "Path")
-                       (choice (const :tag "Read/write" w)
-                               (const :tag "Read-only" r)
+                       (choice (const :tag "Read/write" 'w)
+                               (const :tag "Read-only" 'r)
                                (const :tag "Hidden" nil))))
   :group 'agent-tui-bwrap)
 
-(defcustom 
-  '(("./" . rw)
-    ("~/.pi" . rw)
-    ("~/.cache" . rw)
-    ("~/.local" . ro)
-    ("~/.config" . ro)
-    ("~/.gitconfig" . ro)
-    ("~/.ssh" . ro))
-  "Paths to expose inside a Bubblewrap session.
-
-Each entry is a path relative to the launch directory or home directory, and
-is paired with `rw' or `ro'.  The root filesystem is otherwise read-only."
-  :type '(repeat (cons (string :tag "Path")
-                       (choice (const :tag "Read/write" rw)
-                               (const :tag "Read-only" ro))))
-  :group 'agent-tui-bwrap)
-
 (defvar agent-tui-bwrap--previous-command-prefix nil)
+
+(defun agent-tui-bwrap--write-command-script (path command)
+  "Write an executable shell script at PATH that invokes COMMAND.
+
+COMMAND is an argv list.  Arguments supplied to the script are appended to
+COMMAND, after its final argument (the `bwrap' command separator)."
+  (with-temp-file path
+    (insert "#!/bin/sh\nrm -f \"$0\"\nexec "
+            (mapconcat #'shell-quote-argument command " ")
+            " \"$@\"\n"))
+  (set-file-modes path #o700)
+  path)
 
 (defun agent-tui-bwrap--memory-limit ()
   "Return a systemd memory limit, or nil when unavailable."
@@ -191,38 +186,44 @@ is paired with `rw' or `ro'.  The root filesystem is otherwise read-only."
                       agent-tui-bwrap-temp-prefix t
                       (replace-regexp-in-string
                        "[^[:alnum:]]" ""
-                       (or default-directory "agent-tui")))))
-        (append
-         prefix
-         `("bwrap" "--die-with-parent" "--new-session"
-           "--ro-bind" "/" "/"
-           "--tmpfs" "/tmp"
-           "--tmpfs" ,(getenv "HOME"))
-         (thread-last
-           (seq-map (lambda (e) (cons (expand-file-name (car e)) (cdr e))) agent-tui-bwrap-bind-paths)
-           (seq-sort (lambda (e1 e2) (string-lessp (car e1) (car e2))))
-           (seq-filter (lambda (e) (file-exists-p (car e))))
-           (seq-mapcat (lambda (e)
-                         (let ((p (car e))
-                               (m (cdr e)))
-                           (cond
-                            ((eq m 'w) (list "--bind" (file-truename p) (file-truename p)
-                                             "--bind" p p))
-                            ((eq m 'r) (list "--ro-bind" (file-truename p) (file-truename p)
-                                             "--ro-bind" p p))
-                            (t (list "--tmpfs" p)))))))
-         `("--proc" "/proc"
-           "--dev" "/dev"
-           "--chdir" ,default-directory
-           "--setenv" "HTTP_PROXY" ,(or (getenv "HTTP_PROXY") "")
-           "--setenv" "HTTPS_PROXY" ,(or (getenv "HTTPS_PROXY") "")
-           "--setenv" "NO_PROXY" ,(or (getenv "NO_PROXY") "")
-           "--setenv" "HOME" ,(getenv "HOME")
-           "--setenv" "TMPDIR" ,tmpdir
-           "--setenv" "XDG_CACHE_INNER" ,(expand-file-name ".agent-shell/xdgcache")
-           "--setenv" "XDG_STATE_INNER" ,(expand-file-name ".agent-shell/xdgstate")
-           "--setenv" "XDG_RUNTIME_INNER" ,(expand-file-name ".agent-shell/xdgruntime")
-           "--"))))))
+                       (or default-directory "agent-tui"))))
+             (bind-arguments
+              (thread-last
+                (seq-map (lambda (e) (cons (expand-file-name (car e)) (cdr e))) agent-tui-bwrap-bind-paths)
+                (seq-sort (lambda (e1 e2) (string-lessp (car e1) (car e2))))
+                (seq-filter (lambda (e) (file-exists-p (car e))))
+                (seq-mapcat (lambda (e)
+                              (let ((p (car e))
+                                    (m (cdr e)))
+                                (cond
+                                 ((eq m 'w) (list "--bind" (file-truename p) (file-truename p)
+                                                  "--bind" p p))
+                                 ((eq m 'r) (list "--ro-bind" (file-truename p) (file-truename p)
+                                                  "--ro-bind" p p))
+                                 (t (list "--tmpfs" p))))))))
+             (command
+              (append prefix
+                      `("bwrap" "--die-with-parent" "--new-session"
+                        "--ro-bind" "/" "/"
+                        "--tmpfs" "/tmp"
+                        "--tmpfs" ,(or (getenv "HOME") ""))
+                      bind-arguments
+                      `("--proc" "/proc"
+                        "--dev" "/dev"
+                        "--chdir" ,default-directory
+                        "--setenv" "HTTP_PROXY" ,(or (getenv "HTTP_PROXY") "")
+                        "--setenv" "HTTPS_PROXY" ,(or (getenv "HTTPS_PROXY") "")
+                        "--setenv" "NO_PROXY" ,(or (getenv "NO_PROXY") "")
+                        "--setenv" "HOME" ,(or (getenv "HOME") "")
+                        "--setenv" "TMPDIR" ,tmpdir
+                        "--setenv" "XDG_CACHE_INNER" ,(expand-file-name ".agent-shell/xdgcache")
+                        "--setenv" "XDG_STATE_INNER" ,(expand-file-name ".agent-shell/xdgstate")
+                        "--setenv" "XDG_RUNTIME_INNER" ,(expand-file-name ".agent-shell/xdgruntime")
+                        "--")))
+             (script (expand-file-name "run-bwrap" tmpdir)))
+        ;; Keep the bind-heavy command out of the terminal's input buffer.
+        (agent-tui-bwrap--write-command-script script command)
+        (list script)))))
 
 ;;;###autoload
 (define-minor-mode agent-tui-bwrap-mode

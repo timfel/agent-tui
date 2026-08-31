@@ -33,8 +33,20 @@ prefix; use `agent-tui-command-prefix' for that."
   :type 'number
   :group 'agent-tui-pi)
 
+(defcustom agent-tui-pi-startup-delay 1.5
+  "Seconds to wait after starting Pi before sending an injected command.
+
+Pi can render its startup screen before its input handler is ready.  In
+particular, a Return sent during that interval may be lost while the command
+text remains in the editor."
+  :type 'number
+  :group 'agent-tui-pi)
+
 (defvar-local agent-tui-pi--session-id nil
   "Session ID known for the Pi process in the current buffer.")
+
+(defvar-local agent-tui-pi--session-query-ready-at nil
+  "Earliest time at which an injected Pi session query may be sent.")
 
 (defvar-local agent-tui-pi--session-query-in-progress nil
   "Non-nil while the current buffer is being queried for its Pi session ID.")
@@ -114,24 +126,36 @@ changing the process command line, so the startup ID is only a fallback."
   (with-current-buffer buffer
     (unless agent-tui-pi--session-query-in-progress
       (let ((process (get-buffer-process buffer))
-            (start (point-max))
-            (deadline (+ (float-time)
-                         (max 0 agent-tui-pi-session-query-timeout)))
+            (ready-at (or agent-tui-pi--session-query-ready-at
+                          (float-time)))
             session-id)
         (when (process-live-p process)
           (setq agent-tui-pi--session-query-in-progress t)
           (unwind-protect
               (progn
-                (agent-tui--send-input "/session")
-                ;; Wait until the terminal has processed the command.  Search
-                ;; only output added by this request so an earlier `/session'
-                ;; response cannot be mistaken for the current one.
+                ;; Pi may accept the text while its startup screen is being
+                ;; rendered but drop the Return that submits it.  Let startup
+                ;; finish before sending the complete command.
                 (while (and (process-live-p process)
-                            (<= (float-time) deadline)
-                            (null (setq session-id
-                                        (agent-tui-pi--buffer-session-id
-                                         buffer start))))
-                  (accept-process-output process 0.05))
+                            (< (float-time) ready-at))
+                  (accept-process-output
+                   process
+                   (min 0.05 (- ready-at (float-time)))))
+                (when (process-live-p process)
+                  (let ((start (point-max))
+                        (deadline (+ (float-time)
+                                     (max 0 agent-tui-pi-session-query-timeout))))
+                    (agent-tui--send-input "/session")
+                    ;; Wait until the terminal has processed the command.
+                    ;; Search only output added by this request so an earlier
+                    ;; `/session' response cannot be mistaken for the current
+                    ;; one.
+                    (while (and (process-live-p process)
+                                (<= (float-time) deadline)
+                                (null (setq session-id
+                                            (agent-tui-pi--buffer-session-id
+                                             buffer start))))
+                      (accept-process-output process 0.05))))
                 (or session-id
                     (agent-tui-pi--buffer-session-id buffer)))
             (setq agent-tui-pi--session-query-in-progress nil)))))))
@@ -151,7 +175,9 @@ changing the process command line, so the startup ID is only a fallback."
     ;; The terminal helper creates a different current buffer, so the session
     ;; ID must be copied explicitly into the returned terminal buffer.
     (with-current-buffer buffer
-      (setq-local agent-tui-pi--session-id pi-session-id))
+      (setq-local agent-tui-pi--session-id pi-session-id
+                  agent-tui-pi--session-query-ready-at
+                  (+ (float-time) (max 0 agent-tui-pi-startup-delay))))
     buffer))
 
 (cl-defmethod agent-tui--started ((provider (eql 'pi)) buffer)
