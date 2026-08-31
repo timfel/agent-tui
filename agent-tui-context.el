@@ -65,6 +65,7 @@
   '((fundamental-mode . "text")
     (special-mode . "text")
     (vterm-mode . "text")
+    (ghostel-mode . "text")
     (term-mode . "text")
     (eshell-mode . "text")
     (comint-mode . "text")
