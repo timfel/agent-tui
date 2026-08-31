@@ -161,7 +161,11 @@ is paired with `rw' or `ro'.  The root filesystem is otherwise read-only."
   :lighter " AT-Bwrap"
   :group 'agent-tui-bwrap
   (if agent-tui-bwrap-mode
-      (progn
+      ;; Do not overwrite the saved prefix when enabling an already enabled
+      ;; mode.  `define-minor-mode' may be called with 1 more than once, and
+      ;; otherwise disabling would restore the bwrap prefix itself.
+      (unless (eq agent-tui-command-prefix
+                  #'agent-tui-bwrap-command-prefix)
         (setq agent-tui-bwrap--previous-command-prefix
               agent-tui-command-prefix)
         (setq agent-tui-command-prefix

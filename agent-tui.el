@@ -328,6 +328,32 @@ on the dynamically bound global `agent-tui-provider'."
         (setq default-directory directory)))
     buffer))
 
+(defun agent-tui--restart (resume)
+  "Restart the current agent TUI, optionally RESUME its session."
+  (let ((buffer (current-buffer)))
+    (unless (agent-tui--active-buffer-p buffer)
+      (user-error "The current buffer is not an active agent-tui buffer"))
+    (let* ((provider (agent-tui--provider-for-buffer buffer))
+           (directory (agent-tui-cwd buffer))
+           (sessionid (and resume (agent-tui-get-sessionid buffer))))
+      (when (and resume
+                 (or (null sessionid) (string-empty-p sessionid)))
+        (user-error "The current agent-tui buffer has no resumable session"))
+      (kill-buffer buffer)
+      (agent-tui-start-in-directory provider directory t sessionid))))
+
+;;;###autoload
+(defun agent-tui-restart ()
+  "Close the current agent TUI and start a fresh session with its provider."
+  (interactive)
+  (agent-tui--restart nil))
+
+;;;###autoload
+(defun agent-tui-reload ()
+  "Close the current agent TUI and resume its session with its provider."
+  (interactive)
+  (agent-tui--restart t))
+
 ;;;###autoload
 (defun agent-tui-started (buffer)
   "Run post-start setup for the agent TUI in BUFFER.

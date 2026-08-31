@@ -10,6 +10,14 @@
 (autoload 'agent-tui-start "agent-tui" "Start the selected agent TUI." t)
 
 ;;;###autoload
+(autoload 'agent-tui-restart "agent-tui"
+  "Close the current agent TUI and start a fresh session with its provider." t)
+
+;;;###autoload
+(autoload 'agent-tui-reload "agent-tui"
+  "Close the current agent TUI and resume its session with its provider." t)
+
+;;;###autoload
 (autoload 'agent-tui-started "agent-tui" "Run post-start setup for an agent TUI buffer." t)
 
 ;;;###autoload
