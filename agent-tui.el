@@ -27,13 +27,13 @@
 (require 'cl-lib)
 (require 'subr-x)
 
-(require 'agent-tui-pi)
-
 (declare-function project-current "project" (&optional maybe-prompt directory))
 (declare-function project-root "project" (project))
 (declare-function project-buffers "project" (project))
 (declare-function term-char-mode "term" ())
 (declare-function ghostel "ghostel" (&optional new-buffer))
+(declare-function ghostel-send-string "ghostel" (string))
+(declare-function ghostel-send-key "ghostel" (key-name &optional mods))
 (declare-function vterm "vterm" (&optional arg))
 (declare-function eat "eat" (&optional buffer))
 
@@ -376,6 +376,11 @@ This helper is intended for provider implementations."
 (defun agent-tui--send-string (string)
   "Send STRING to the current buffer's terminal emulator."
   (pcase agent-tui--terminal
+    ('ghostel
+     (if (fboundp 'ghostel-send-string)
+         ;; Ghostel's low-level sender expects UTF-8 bytes.
+         (ghostel-send-string (encode-coding-string string 'utf-8))
+       (agent-tui--process-send-string string)))
     ('vterm
      (if (fboundp 'vterm-send-string)
          (vterm-send-string string)
@@ -391,6 +396,10 @@ This helper is intended for provider implementations."
 (defun agent-tui--send-return ()
   "Send a Return key to the current buffer's terminal emulator."
   (pcase agent-tui--terminal
+    ('ghostel
+     (if (fboundp 'ghostel-send-key)
+         (ghostel-send-key "return")
+       (agent-tui--process-send-string "\r")))
     ('vterm
      (if (fboundp 'vterm-send-return)
          (vterm-send-return)
@@ -473,8 +482,11 @@ This helper is intended for provider implementations."
                        #'agent-tui--busy-timer-function
                        (current-buffer)))))
 
-(defun agent-tui--busy-timer-function (&optional _timer buffer)
-  "Check BUFFER and run its idle hook on a busy-to-idle transition."
+(defun agent-tui--busy-timer-function (&optional buffer)
+  "Check BUFFER and run its idle hook on a busy-to-idle transition.
+
+`run-at-time' passes only the arguments supplied after the function, not the
+timer object itself."
   (setq buffer (or buffer (current-buffer)))
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
