@@ -96,6 +96,7 @@ The hook is made buffer-local in agent TUI buffers.  It is not run again until
 (defvar-local agent-tui--idle-notified nil)
 (defvar-local agent-tui--prompt-queue nil)
 
+(defconst agent-tui--buffer-name "*agent-tui*")
 (defconst agent-tui--last-buffer-lines 12)
 (defconst agent-tui--last-buffer-bytes 8192)
 
@@ -366,6 +367,7 @@ terminal themselves."
   (let ((provider (agent-tui--provider-for-buffer buffer)))
     (unless provider
       (error "No agent-tui provider associated with %s" (buffer-name buffer)))
+    (setq buffer (agent-tui--ensure-buffer-name buffer))
     (with-current-buffer buffer
       (setq-local agent-tui--provider provider))
     ;; Install the generic monitor before calling provider setup.  Providers
@@ -400,6 +402,17 @@ Providers that do not support sessions return the empty string."
       "")))
 
 ;;; Terminal support
+
+(defun agent-tui--ensure-buffer-name (buffer)
+  "Ensure BUFFER has an agent-tui-specific name."
+  (with-current-buffer buffer
+    (unless (or (string= (buffer-name) agent-tui--buffer-name)
+                (string-match-p
+                 (concat "\\`" (regexp-quote agent-tui--buffer-name)
+                         "<[0-9]+>\\'")
+                 (buffer-name)))
+      (rename-buffer (generate-new-buffer-name agent-tui--buffer-name))))
+  buffer)
 
 (defun agent-tui--start-eat (&optional _prefix-key)
   "Start a new Eat buffer.
@@ -453,6 +466,7 @@ This helper is intended for provider implementations."
       (setq buffer (current-buffer)))
     (unless (buffer-live-p buffer)
       (error "Could not create a %s terminal buffer" terminal))
+    (setq buffer (agent-tui--ensure-buffer-name buffer))
     (with-current-buffer buffer
       (setq-local agent-tui--terminal terminal)
       (agent-tui--send-input command))
