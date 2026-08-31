@@ -78,6 +78,9 @@ Provider packages normally bind this dynamically in their public start
 command.  Setting it globally is also useful when there is only one provider
 in a configuration.")
 
+(defvar agent-tui-started-hook nil
+  "Hook run in a buffer after generic agent TUI setup has completed.")
+
 (defvar agent-tui-idle-hook nil
   "Hook run once when the current agent TUI becomes idle.
 
@@ -297,19 +300,33 @@ Return the selected or started terminal buffer."
       (agent-tui--select-existing-buffer buffer))))
 
 ;;;###autoload
-(defun agent-tui-start-in-directory (provider directory &optional prefix-key sessionid)
+(defun agent-tui-start-in-directory
+    (provider directory &optional prefix-key sessionid no-focus)
   "Start PROVIDER in DIRECTORY and return its terminal buffer.
 
-This is a convenience for integrations that need to launch a provider without
-relying on the dynamically bound global `agent-tui-provider'."
+When NO-FOCUS is non-nil, start a fresh buffer without selecting it.  This is
+a convenience for integrations that need to launch a provider without relying
+on the dynamically bound global `agent-tui-provider'."
   (let* ((directory (agent-tui--directory directory))
          (default-directory directory)
-         (agent-tui-provider provider))
-    (let ((buffer (agent-tui-start prefix-key sessionid)))
-      (when (buffer-live-p buffer)
-        (with-current-buffer buffer
-          (setq default-directory directory)))
-      buffer)))
+         (agent-tui-provider provider)
+         (buffer
+          (if no-focus
+              (let ((buffer (agent-tui--start provider
+                                               (or prefix-key t)
+                                               sessionid)))
+                (unless (buffer-live-p buffer)
+                  (error "Provider %S did not return a live terminal buffer"
+                         provider))
+                (with-current-buffer buffer
+                  (setq-local agent-tui--provider provider))
+                (agent-tui-started buffer)
+                buffer)
+            (agent-tui-start prefix-key sessionid))))
+    (when (buffer-live-p buffer)
+      (with-current-buffer buffer
+        (setq default-directory directory)))
+    buffer))
 
 ;;;###autoload
 (defun agent-tui-started (buffer)
@@ -330,6 +347,8 @@ terminal themselves."
     ;; the next method merely to get the default timer.
     (agent-tui--initialize-buffer buffer)
     (agent-tui--started provider buffer)
+    (with-current-buffer buffer
+      (run-hooks 'agent-tui-started-hook))
     buffer))
 
 ;;;###autoload

@@ -25,7 +25,16 @@ Optional focused integrations are separately loadable:
 
 (require 'agent-tui-dashboard)
 (global-set-key (kbd "C-x a a") #'agent-tui-dashboard)
+
+(require 'agent-tui-bookmark)
+(require 'agent-tui-ol)
+
+(require 'agent-tui-desktop)
+(agent-tui-desktop-mode 1)
 ```
+
+Bookmarks and Org links record the provider, working directory, and session
+ID.  Desktop integration restores active TUI sessions across Emacs restarts.
 
 `agent-tui-fanout-worktrees` creates one TUI per task below
 `.agent-tui/worktrees`.  `agent-tui-jira-investigate-marked` adds the small

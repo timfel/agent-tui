@@ -65,6 +65,14 @@
   "Start agent TUI investigations for marked Jira issues." t)
 
 ;;;###autoload
+(autoload 'agent-tui-bookmark-handler "agent-tui-bookmark"
+  "Handle an agent-tui bookmark." nil)
+
+;;;###autoload
+(autoload 'agent-tui-ol-follow "agent-tui-ol"
+  "Follow an agent-tui Org link." nil)
+
+;;;###autoload
 (autoload 'agent-tui-context-prompt "agent-tui-context"
   "Return a prompt with explicitly requested Emacs context appended." nil)
 
@@ -95,6 +103,14 @@
 ;;;###autoload
 (autoload 'agent-tui-dashboard-delete-worktree "agent-tui-dashboard"
   "Delete the current fan-out worktree after confirmation." t)
+
+;;;###autoload
+(autoload 'agent-tui-desktop-mode "agent-tui-desktop"
+  "Persist active agent TUI sessions with Emacs Desktop." t)
+
+;;;###autoload
+(autoload 'agent-tui-desktop-version "agent-tui-desktop"
+  "Show the agent-tui Desktop integration version." t)
 
 ;;;###autoload
 (autoload 'agent-tui-pi-start "agent-tui-pi" "Start Pi's terminal UI." t)
