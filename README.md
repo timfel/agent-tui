@@ -35,6 +35,9 @@ Optional focused integrations are separately loadable:
 
 Bookmarks and Org links record the provider, working directory, and session
 ID.  Desktop integration restores active TUI sessions across Emacs restarts.
+When starting interactively, `agent-tui-start` can resume a recorded session
+or create a new project or temporary session.  Project-local session IDs are
+stored in `.agent-tui/sessions`; their file timestamps show last use.
 
 `agent-tui-fanout-worktrees` creates one TUI per task below
 `.agent-tui/worktrees`.  `agent-tui-jira-investigate-marked` adds the small

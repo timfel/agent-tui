@@ -21,7 +21,10 @@
 
 (defcustom agent-tui-dashboard-search-directories
   (list user-emacs-directory)
-  "Directories searched for `.agent-tui/worktrees'."
+  "Directories searched for `.agent-tui' markers and worktrees.
+
+Each search directory and its immediate child directories are checked for an
+`.agent-tui' marker and `.agent-tui/worktrees'."
   :type '(repeat directory)
   :group 'agent-tui-dashboard)
 
@@ -77,15 +80,21 @@ Set to nil to disable automatic refreshing."
                                  directory-files-no-dot-files-regexp))))
 
 (defun agent-tui-dashboard--configured-folders ()
-  "Return configured fan-out and project folders."
+  "Return configured fan-out and project folders.
+
+Check each configured directory and one level of children, matching the
+layout used by the agent-shell dashboard."
   (let (folders)
     (dolist (directory agent-tui-dashboard-search-directories)
       (let* ((root (agent-tui-dashboard--directory directory))
-             (base (agent-tui-fanout--base-directory root)))
-        (when (file-directory-p base)
-          (setq folders (append (agent-tui-dashboard--children base) folders)))
-        (when (file-directory-p (expand-file-name ".agent-tui" root))
-          (push root folders))))
+             (candidates (cons root (agent-tui-dashboard--children root))))
+        (dolist (candidate candidates)
+          (let ((base (agent-tui-fanout--base-directory candidate)))
+            (when (file-directory-p base)
+              (setq folders
+                    (append (agent-tui-dashboard--children base) folders)))
+            (when (file-directory-p (expand-file-name ".agent-tui" candidate))
+              (push candidate folders))))))
     folders))
 
 (defun agent-tui-dashboard--live-folders ()

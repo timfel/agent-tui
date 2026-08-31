@@ -71,6 +71,28 @@ TUI command."
   :type 'number
   :group 'agent-tui)
 
+(defcustom agent-tui-session-strategy 'prompt
+  "How to handle persisted sessions when starting an agent TUI.
+
+`new' starts a fresh session in the current project.  `latest' resumes the
+most recently used persisted session when one exists.  `prompt' offers
+persisted sessions, a fresh project session, and a temporary session.  A
+prefix argument always starts a fresh project session, and an explicit
+session ID always resumes that session."
+  :type '(choice (const :tag "Always start a new session" new)
+                 (const :tag "Resume the latest session" latest)
+                 (const :tag "Prompt for a session" prompt))
+  :group 'agent-tui)
+
+(defcustom agent-tui-session-directory ".agent-tui/sessions"
+  "Directory in which to record resumable agent TUI session IDs.
+
+The path is relative to the current project root unless it is absolute.  Each
+session is represented by a file containing its ID; the file modification time
+records when the session was last started or resumed."
+  :type 'directory
+  :group 'agent-tui)
+
 (defvar agent-tui-provider nil
   "Provider used by `agent-tui-start'.
 
@@ -95,6 +117,8 @@ The hook is made buffer-local in agent TUI buffers.  It is not run again until
 (defvar-local agent-tui--busy-timer nil)
 (defvar-local agent-tui--idle-notified nil)
 (defvar-local agent-tui--prompt-queue nil)
+(defvar-local agent-tui--session-persistence-disabled nil)
+(defvar-local agent-tui--temporary-directory nil)
 
 (defconst agent-tui--buffer-name "*agent-tui*")
 (defconst agent-tui--last-buffer-lines 12)
@@ -160,6 +184,137 @@ such as `(4)' or `(16)'."
                    (project-root project)
                  directory)))
     (cons project (agent-tui--directory root))))
+
+(defun agent-tui--session-directory (&optional directory)
+  "Return the session-record directory for DIRECTORY's project."
+  (file-name-as-directory
+   (expand-file-name agent-tui-session-directory
+                     (cdr (agent-tui--project-context directory)))))
+
+(defun agent-tui--session-record-file-name (sessionid)
+  "Return a safe file name for SESSIONID."
+  (if (and (not (member sessionid '("." "..")))
+           (string-match-p "\\`[[:alnum:]_.-]+\\'" sessionid))
+      sessionid
+    (concat "session-" (secure-hash 'sha256 sessionid))))
+
+(defun agent-tui--session-record-path (directory sessionid)
+  "Return the session-record path for SESSIONID in DIRECTORY."
+  (expand-file-name
+   (agent-tui--session-record-file-name sessionid)
+   (agent-tui--session-directory directory)))
+
+(defun agent-tui--read-session-record (file)
+  "Return the session ID stored in FILE, or nil when FILE is invalid."
+  (when (file-regular-p file)
+    (condition-case nil
+        (with-temp-buffer
+          (insert-file-contents file)
+          (let ((sessionid (string-trim (buffer-string))))
+            (unless (string-empty-p sessionid)
+              sessionid)))
+      (error nil))))
+
+(defun agent-tui--session-records (&optional directory)
+  "Return persisted session records for DIRECTORY, newest first.
+
+Each record is a plist containing `:id', `:time', and `:file'."
+  (let ((directory (agent-tui--session-directory directory)))
+    (when (file-directory-p directory)
+      (sort
+       (delq nil
+             (mapcar
+              (lambda (file)
+                (when-let* ((sessionid (agent-tui--read-session-record file)))
+                  (list :id sessionid
+                        :time (file-attribute-modification-time
+                               (file-attributes file))
+                        :file file)))
+              (directory-files directory t
+                               directory-files-no-dot-files-regexp)))
+       (lambda (left right)
+         (time-less-p (or (plist-get right :time) '(0 0))
+                      (or (plist-get left :time) '(0 0))))))))
+
+(defun agent-tui--record-session (buffer)
+  "Record BUFFER's current session ID and update its last-used time."
+  (when (and (buffer-live-p buffer)
+             (with-current-buffer buffer
+               (not agent-tui--session-persistence-disabled)))
+    (condition-case nil
+        (with-current-buffer buffer
+          (let* ((provider (agent-tui--provider-for-buffer buffer))
+                 (sessionid (and provider
+                                 (agent-tui--get-sessionid provider buffer))))
+            (when (and (stringp sessionid)
+                       (not (string-empty-p sessionid)))
+              (let ((file (agent-tui--session-record-path
+                           (agent-tui-cwd buffer) sessionid)))
+                (make-directory (file-name-directory file) t)
+                ;; Rewriting the tiny file is portable and updates its mtime,
+                ;; which is the recency information shown in the picker.
+                (with-temp-file file
+                  (insert sessionid "\n"))))))
+      (error nil))))
+
+(defun agent-tui--format-session-time (time)
+  "Return a display timestamp for session record TIME."
+  (format-time-string "%F %T" time))
+
+(defun agent-tui--session-choice-label (record)
+  "Return a completion label for persisted session RECORD."
+  (format "%s  %s"
+          (agent-tui--format-session-time (plist-get record :time))
+          (plist-get record :id)))
+
+(defun agent-tui--prompt-session-choice (records buffers)
+  "Prompt for a session from RECORDS and BUFFERS.
+
+Return `:new-session', `:temp-session', a plist containing `:buffers', or a
+persisted session record."
+  (let* ((choices
+          (append
+           (list (cons "New session" :new-session)
+                 (cons "New temp session" :temp-session))
+           (when buffers
+             (list (cons "Switch to existing TUI"
+                         (list :buffers buffers))))
+           (mapcar (lambda (record)
+                     (cons (agent-tui--session-choice-label record) record))
+                   records)))
+         (default (caar choices)))
+    (if noninteractive
+        (or (car records) :new-session)
+      (let ((selection (if (length= choices 1)
+                           default
+                         (completing-read
+                          (format "Start agent TUI (default: %s): " default)
+                          choices nil t nil nil default))))
+        (or (cdr (assoc selection choices))
+            (user-error "Nothing selected"))))))
+
+(defun agent-tui--cleanup-temporary-directory ()
+  "Delete the temporary directory associated with the current TUI."
+  (when (and agent-tui--temporary-directory
+             (file-directory-p agent-tui--temporary-directory))
+    (delete-directory agent-tui--temporary-directory t)
+    (setq agent-tui--temporary-directory nil)))
+
+(defun agent-tui--new-temp-session (provider)
+  "Start PROVIDER in a temporary directory and return its buffer."
+  (let ((directory (make-temp-file "agent-tui-" t)))
+    (condition-case err
+        (let ((buffer (agent-tui-start-in-directory
+                       provider directory t nil t t)))
+          (with-current-buffer buffer
+            (setq-local agent-tui--temporary-directory directory)
+            (add-hook 'kill-buffer-hook
+                      #'agent-tui--cleanup-temporary-directory nil t))
+          buffer)
+      (error
+       (when (file-directory-p directory)
+         (delete-directory directory t))
+       (signal (car err) (cdr err))))))
 
 (defun agent-tui--active-buffer-p (buffer)
   "Return non-nil when BUFFER is an active agent-tui buffer."
@@ -241,13 +396,13 @@ The result is `busy', `ready', `unknown', or `dead'.  BUFFER defaults to
 The selected provider is `agent-tui-provider'.  Provider start commands should
 bind that variable and call this function.
 
-With no PREFIX-KEY, select the most recently used active agent-tui buffer in
-the current `project.el' project.  If there is no such buffer, start one with
-its `default-directory' set to the project root.  A single prefix always
-starts a new buffer.  A double (or larger) prefix prompts for one of the
-active buffers instead.  If SESSIONID is provided, an existing buffer for
-that session is reused when possible; otherwise a new buffer resumes it.
-Return the selected or started terminal buffer."
+With no PREFIX-KEY, `agent-tui-session-strategy' controls whether to start a
+new session, resume the latest recorded session, or prompt with choices for a
+new project session, a temporary session, and recorded sessions.  A single
+prefix always starts a new project session.  A double (or larger) prefix
+prompts for one of the active buffers instead.  If SESSIONID is provided, an
+existing buffer for that session is reused when possible; otherwise a new
+buffer resumes it.  Return the selected or started terminal buffer."
   (interactive "P")
   (let* ((provider (or agent-tui-provider
                        (user-error "No agent-tui provider selected")))
@@ -256,9 +411,11 @@ Return the selected or started terminal buffer."
          (project (car context))
          (root (cdr context))
          (buffers (agent-tui--project-buffers project root))
+         (records (agent-tui--session-records root))
          (sessionid (and sessionid
                          (not (string-empty-p sessionid))
                          sessionid))
+         (started nil)
          buffer)
     (cond
      ;; A session ID identifies the session to resume.  Prefer an already
@@ -281,31 +438,55 @@ Return the selected or started terminal buffer."
         (setq buffer (agent-tui--start provider
                                        (or prefix-key t)
                                        sessionid))))
-     ;; No prefix: reuse the most recent active process, or start at ROOT.
-     ((setq buffer (car buffers))
-      (agent-tui--select-existing-buffer buffer))
+     ;; With no prefix, use the configured persisted-session behavior.
      (t
-      (let ((default-directory root))
-        ;; There was no existing agent-tui buffer, so force a fresh terminal
-        ;; even though the user did not type a prefix.
-        (setq buffer (agent-tui--start provider t nil)))))
-    (if (memq buffer buffers)
-        buffer
+      (let ((choice
+             (pcase agent-tui-session-strategy
+               ('new :new-session)
+               ('latest (or (car records) :new-session))
+               ('prompt (agent-tui--prompt-session-choice records buffers))
+               (_ (user-error "Unknown agent-tui-session-strategy: %S"
+                              agent-tui-session-strategy)))))
+        (cond
+         ((eq choice :new-session)
+          (let ((default-directory root))
+            (setq buffer (agent-tui--start provider t nil))))
+         ((eq choice :temp-session)
+          (setq buffer (agent-tui--new-temp-session provider)
+                started t))
+         ((plist-get choice :buffers)
+          (setq buffer
+                (agent-tui--select-existing-buffer
+                 (agent-tui--select-buffer (plist-get choice :buffers)))))
+         ((plist-get choice :id)
+          (let ((default-directory root))
+            (setq buffer (agent-tui--start provider t
+                                           (plist-get choice :id)))))
+         (t
+          (error "Invalid agent-tui session choice: %S" choice))))))
+    (if (and (not started) (memq buffer buffers))
+        (progn
+          ;; Selecting an existing session also updates its local recency
+          ;; record, making the files useful as a last-used index.
+          (agent-tui--record-session buffer)
+          buffer)
       (unless (buffer-live-p buffer)
         (error "Provider %S did not return a live terminal buffer" provider))
-      (with-current-buffer buffer
-        (setq-local agent-tui--provider provider))
-      (agent-tui-started buffer)
+      (unless started
+        (with-current-buffer buffer
+          (setq-local agent-tui--provider provider))
+        (agent-tui-started buffer))
       ;; Terminal packages are asked only to create a new buffer.  Select it
       ;; here, alongside the existing-buffer selection paths above.
       (agent-tui--select-existing-buffer buffer))))
 
 ;;;###autoload
 (defun agent-tui-start-in-directory
-    (provider directory &optional prefix-key sessionid no-focus)
+    (provider directory &optional prefix-key sessionid no-focus no-persist)
   "Start PROVIDER in DIRECTORY and return its terminal buffer.
 
-When NO-FOCUS is non-nil, start a fresh buffer without selecting it.  This is
+When NO-FOCUS is non-nil, start a fresh buffer without selecting it.  When
+NO-PERSIST is non-nil, do not record its session ID in `.agent-tui'.  This is
 a convenience for integrations that need to launch a provider without relying
 on the dynamically bound global `agent-tui-provider'."
   (let* ((directory (agent-tui--directory directory))
@@ -320,7 +501,9 @@ on the dynamically bound global `agent-tui-provider'."
                   (error "Provider %S did not return a live terminal buffer"
                          provider))
                 (with-current-buffer buffer
-                  (setq-local agent-tui--provider provider))
+                  (setq-local agent-tui--provider provider)
+                  (setq-local agent-tui--session-persistence-disabled no-persist)
+                  (setq default-directory directory))
                 (agent-tui-started buffer)
                 buffer)
             (agent-tui-start prefix-key sessionid))))
@@ -375,6 +558,9 @@ terminal themselves."
     ;; the next method merely to get the default timer.
     (agent-tui--initialize-buffer buffer)
     (agent-tui--started provider buffer)
+    ;; Persist after provider setup, since this is when providers know the
+    ;; session ID.  Rewriting the record also marks a resumed session used.
+    (agent-tui--record-session buffer)
     (with-current-buffer buffer
       (run-hooks 'agent-tui-started-hook))
     buffer))
