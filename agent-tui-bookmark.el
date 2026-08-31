@@ -20,7 +20,7 @@
   "Create a bookmark record for the current agent TUI session."
   (let* ((session-id (agent-tui-get-sessionid (current-buffer)))
          (session-id (unless (string-empty-p session-id) session-id))
-         (provider (agent-tui--provider-for-buffer))
+         (provider (agent-tui-provider-for-buffer))
          (buffer-name (buffer-name))
          (directory (agent-tui-cwd)))
     `(,buffer-name

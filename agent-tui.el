@@ -152,7 +152,7 @@ buffer."
   (ignore provider buffer)
   "")
 
-(defun agent-tui--provider-for-buffer (&optional buffer)
+(defun agent-tui-provider-for-buffer (&optional buffer)
   "Return the provider associated with BUFFER, or the global provider."
   (if buffer
       (with-current-buffer buffer
@@ -243,7 +243,7 @@ Each record is a plist containing `:id', `:time', and `:file'."
                (not agent-tui--session-persistence-disabled)))
     (condition-case nil
         (with-current-buffer buffer
-          (let* ((provider (agent-tui--provider-for-buffer buffer))
+          (let* ((provider (agent-tui-provider-for-buffer buffer))
                  (sessionid (and provider
                                  (agent-tui--get-sessionid provider buffer))))
             (when (and (stringp sessionid)
@@ -517,7 +517,7 @@ on the dynamically bound global `agent-tui-provider'."
   (let ((buffer (current-buffer)))
     (unless (agent-tui--active-buffer-p buffer)
       (user-error "The current buffer is not an active agent-tui buffer"))
-    (let* ((provider (agent-tui--provider-for-buffer buffer))
+    (let* ((provider (agent-tui-provider-for-buffer buffer))
            (directory (agent-tui-cwd buffer))
            (sessionid (and resume (agent-tui-get-sessionid buffer))))
       (when (and resume
@@ -547,7 +547,7 @@ terminal themselves."
   (interactive (list (current-buffer)))
   (unless (buffer-live-p buffer)
     (error "Not a live buffer: %S" buffer))
-  (let ((provider (agent-tui--provider-for-buffer buffer)))
+  (let ((provider (agent-tui-provider-for-buffer buffer)))
     (unless provider
       (error "No agent-tui provider associated with %s" (buffer-name buffer)))
     (setq buffer (agent-tui--ensure-buffer-name buffer))
@@ -570,7 +570,7 @@ terminal themselves."
   "Return non-nil if the current agent TUI is still busy.
 
 LAST-BUFFER-CONTENTS is normally supplied by the internal timer."
-  (let ((provider (agent-tui--provider-for-buffer)))
+  (let ((provider (agent-tui-provider-for-buffer)))
     (unless provider
       (error "No agent-tui provider associated with %s" (buffer-name)))
     (agent-tui--busy-p provider last-buffer-contents)))
@@ -582,7 +582,7 @@ LAST-BUFFER-CONTENTS is normally supplied by the internal timer."
 Providers that do not support sessions return the empty string."
   (unless (buffer-live-p buffer)
     (error "Not a live buffer: %S" buffer))
-  (let ((provider (agent-tui--provider-for-buffer buffer)))
+  (let ((provider (agent-tui-provider-for-buffer buffer)))
     (if provider
         (agent-tui--get-sessionid provider buffer)
       "")))

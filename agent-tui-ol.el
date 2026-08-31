@@ -48,7 +48,7 @@
     (let* ((directory (agent-tui-cwd))
            (session-id (agent-tui-get-sessionid (current-buffer)))
            (session-id (if (stringp session-id) session-id ""))
-           (provider (agent-tui--provider-for-buffer))
+           (provider (agent-tui-provider-for-buffer))
            (link (format "agent-tui:%s::%s::%s"
                          directory session-id provider)))
       (org-link-store-props

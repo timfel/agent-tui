@@ -57,7 +57,7 @@ DESKTOP-DIRECTORY is where Desktop writes its state."
   (when (and agent-tui-desktop-mode
              (agent-tui--active-buffer-p (current-buffer)))
     (let ((session-id (agent-tui-get-sessionid (current-buffer)))
-          (provider (agent-tui--provider-for-buffer)))
+          (provider (agent-tui-provider-for-buffer)))
       (when (and provider (not (string-empty-p session-id)))
         `((:agent-tui . t)
           (:directory . ,(desktop-file-name
