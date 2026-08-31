@@ -436,6 +436,32 @@ convention; buffer reuse is handled by `agent-tui-start', not by Eat."
       (term-char-mode))
     buffer))
 
+(defun agent-tui--terminal-process-sentinel (process event)
+  "Run the original sentinel and kill the TUI buffer when PROCESS exits."
+  (let ((buffer (process-buffer process))
+        (sentinel (process-get process 'agent-tui-original-sentinel)))
+    (unwind-protect
+        (when (and sentinel
+                   (not (eq sentinel #'agent-tui--terminal-process-sentinel)))
+          (funcall sentinel process event))
+      ;; The command sent to the terminal ends its shell after the agent exits.
+      ;; Kill the buffer here as well because `term' and some third-party
+      ;; terminal emulators leave dead terminal buffers behind.
+      (when (and (buffer-live-p buffer)
+                 (not (process-live-p process)))
+        (kill-buffer buffer)))))
+
+(defun agent-tui--install-terminal-process-sentinel (buffer)
+  "Arrange for BUFFER to be killed when its terminal process exits."
+  (with-current-buffer buffer
+    (when-let* ((process (get-buffer-process buffer)))
+      (unless (eq (process-sentinel process)
+                  #'agent-tui--terminal-process-sentinel)
+        (process-put process 'agent-tui-original-sentinel
+                     (process-sentinel process))
+        (set-process-sentinel
+         process #'agent-tui--terminal-process-sentinel)))))
+
 (defun agent-tui--start-terminal (command &optional prefix-key)
   "Start a new terminal and execute COMMAND in it.
 
@@ -469,7 +495,11 @@ This helper is intended for provider implementations."
     (setq buffer (agent-tui--ensure-buffer-name buffer))
     (with-current-buffer buffer
       (setq-local agent-tui--terminal terminal)
-      (agent-tui--send-input command))
+      (agent-tui--install-terminal-process-sentinel buffer)
+      ;; The terminal starts a shell before the provider command is sent.  End
+      ;; that shell after COMMAND returns so quitting the provider also ends
+      ;; the terminal process.
+      (agent-tui--send-input (concat command "; exit")))
     buffer))
 
 (defun agent-tui--process-send-string (string)
