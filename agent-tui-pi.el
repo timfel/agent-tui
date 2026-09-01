@@ -28,34 +28,15 @@ prefix; use `agent-tui-command-prefix' for that."
   :type 'string
   :group 'agent-tui-pi)
 
-(defcustom agent-tui-pi-session-query-timeout 1
-  "Maximum number of seconds to wait for Pi's `/session' response."
-  :type 'number
-  :group 'agent-tui-pi)
-
-(defcustom agent-tui-pi-startup-delay 1.5
-  "Seconds to wait after starting Pi before sending an injected command.
-
-Pi can render its startup screen before its input handler is ready.  In
-particular, a Return sent during that interval may be lost while the command
-text remains in the editor."
-  :type 'number
-  :group 'agent-tui-pi)
-
 (defvar-local agent-tui-pi--session-id nil
   "Session ID known for the Pi process in the current buffer.")
-
-(defvar-local agent-tui-pi--session-query-ready-at nil
-  "Earliest time at which an injected Pi session query may be sent.")
-
-(defvar-local agent-tui-pi--session-query-in-progress nil
-  "Non-nil while the current buffer is being queried for its Pi session ID.")
 
 (defun agent-tui-pi--new-session-id ()
   "Return a locally generated UUID suitable for a new Pi session.
 
-Passing an explicit ID to Pi gives `agent-tui-get-sessionid' a useful fallback
-before Pi is ready to answer a `/session' query."
+Passing an explicit ID to Pi means that `agent-tui-get-sessionid' can work
+immediately, without having to scrape the terminal's rendered `/session'
+view."
   (let ((hex (secure-hash 'sha256
                           (format "%s:%s:%s"
                                   (float-time)
@@ -98,68 +79,6 @@ GENERATED-SESSION-ID is used for a fresh session."
                  when (and tail (cadr tail))
                  return (cadr tail))))))
 
-(defun agent-tui-pi--buffer-session-id (buffer &optional start)
-  "Return the latest Pi session ID rendered in BUFFER, or nil.
-
-When START is non-nil, only text inserted at or after START is searched."
-  (with-current-buffer buffer
-    (save-restriction
-      (widen)
-      (let* ((contents (agent-tui--strip-terminal-control-sequences
-                        (buffer-substring-no-properties
-                         (or start (point-min)) (point-max))))
-             (contents (replace-regexp-in-string "\\r" "" contents))
-             (regexp
-              "^[[:space:]]*ID:[[:space:]]*\\([[:xdigit:]]\\{8\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{4\\}-[[:xdigit:]]\\{12\\}\\)")
-             (position 0)
-             session-id)
-        (while (string-match regexp contents position)
-          (setq session-id (match-string 1 contents)
-                position (match-end 0)))
-        session-id))))
-
-(defun agent-tui-pi--query-session-id (buffer)
-  "Ask Pi for its current session ID in BUFFER.
-
-Pi commands such as `/new' and `/fork' can replace the session without
-changing the process command line, so the startup ID is only a fallback."
-  (with-current-buffer buffer
-    (unless agent-tui-pi--session-query-in-progress
-      (let ((process (get-buffer-process buffer))
-            (ready-at (or agent-tui-pi--session-query-ready-at
-                          (float-time)))
-            session-id)
-        (when (process-live-p process)
-          (setq agent-tui-pi--session-query-in-progress t)
-          (unwind-protect
-              (progn
-                ;; Pi may accept the text while its startup screen is being
-                ;; rendered but drop the Return that submits it.  Let startup
-                ;; finish before sending the complete command.
-                (while (and (process-live-p process)
-                            (< (float-time) ready-at))
-                  (accept-process-output
-                   process
-                   (min 0.05 (- ready-at (float-time)))))
-                (when (process-live-p process)
-                  (let ((start (point-max))
-                        (deadline (+ (float-time)
-                                     (max 0 agent-tui-pi-session-query-timeout))))
-                    (agent-tui--send-input "/session")
-                    ;; Wait until the terminal has processed the command.
-                    ;; Search only output added by this request so an earlier
-                    ;; `/session' response cannot be mistaken for the current
-                    ;; one.
-                    (while (and (process-live-p process)
-                                (<= (float-time) deadline)
-                                (null (setq session-id
-                                            (agent-tui-pi--buffer-session-id
-                                             buffer start))))
-                      (accept-process-output process 0.05))))
-                (or session-id
-                    (agent-tui-pi--buffer-session-id buffer)))
-            (setq agent-tui-pi--session-query-in-progress nil)))))))
-
 (cl-defmethod agent-tui--start ((provider (eql 'pi))
                                 &optional prefix-key sessionid)
   "Start Pi in the configured agent-tui terminal."
@@ -175,9 +94,7 @@ changing the process command line, so the startup ID is only a fallback."
     ;; The terminal helper creates a different current buffer, so the session
     ;; ID must be copied explicitly into the returned terminal buffer.
     (with-current-buffer buffer
-      (setq-local agent-tui-pi--session-id pi-session-id
-                  agent-tui-pi--session-query-ready-at
-                  (+ (float-time) (max 0 agent-tui-pi-startup-delay))))
+      (setq-local agent-tui-pi--session-id pi-session-id))
     buffer))
 
 (cl-defmethod agent-tui--started ((provider (eql 'pi)) buffer)
@@ -203,18 +120,12 @@ changing the process command line, so the startup ID is only a fallback."
      last-buffer-contents)))
 
 (cl-defmethod agent-tui--get-sessionid ((provider (eql 'pi)) buffer)
-  "Return Pi's current session ID for BUFFER."
+  "Return Pi's session ID for BUFFER."
   (ignore provider)
   (with-current-buffer buffer
-    (let ((session-id
-           (condition-case nil
-               (agent-tui-pi--query-session-id buffer)
-             (error nil))))
-      (when (and session-id (not (string-empty-p session-id)))
-        (setq-local agent-tui-pi--session-id session-id))
-      (or agent-tui-pi--session-id
-          (agent-tui-pi--process-session-id buffer)
-          ""))))
+    (or agent-tui-pi--session-id
+        (agent-tui-pi--process-session-id buffer)
+        "")))
 
 ;;;###autoload
 (defun agent-tui-pi-start (&optional prefix-key sessionid)
