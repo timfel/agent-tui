@@ -1,12 +1,12 @@
 # agent-tui
 
-Run coding-agent TUIs in Emacs terminal buffers.  The core is provider-neutral;
-`agent-tui-pi.el` provides Pi support.
+Run coding-agent TUIs in Emacs terminal buffers.  The core eagerly loads its
+built-in providers; `agent-tui-pi.el` provides Pi support.
 
 ## Basic setup
 
 ```elisp
-(require 'agent-tui-pi)
+(require 'agent-tui)
 (setq agent-tui-provider 'pi)
 (global-set-key (kbd "C-x a p") #'agent-tui-pi-start)
 ```

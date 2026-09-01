@@ -7,7 +7,7 @@
 ;; Persist active agent TUI sessions through Emacs Desktop.  Terminal buffers
 ;; use several possible major modes, so the restore handler is installed for
 ;; the supported terminal modes and delegates ordinary terminal buffers to
-;; Desktop's normal handler.
+;; the handler that would otherwise handle their mode.
 ;;
 ;;; Code:
 
@@ -23,11 +23,40 @@
 
 (defvar agent-tui-desktop-mode)
 (defvar desktop-buffer-mode-handlers)
+(defvar desktop-buffer-major-mode)
 (defvar desktop-dirname)
 (defvar-local desktop-save-buffer)
 
 (defconst agent-tui-desktop--terminal-modes
   '(ghostel-mode vterm-mode eat-mode term-mode))
+
+(defvar agent-tui-desktop--fallback-handlers nil
+  "Handlers displaced while the agent-tui Desktop handler is installed.")
+
+(defun agent-tui-desktop--install-handler (mode)
+  "Install the agent-tui handler for MODE ahead of other handlers.
+
+Several terminal packages install their own Desktop handler when their mode
+library is loaded.  Desktop uses the first matching alist entry, so retain
+that handler as a fallback for ordinary terminal buffers while ensuring
+agent-tui entries are handled by this package."
+  (let ((existing (cdr (assq mode desktop-buffer-mode-handlers))))
+    (when (and existing
+               (not (eq existing #'agent-tui-desktop--restore-buffer)))
+      (let ((fallback (assq mode agent-tui-desktop--fallback-handlers)))
+        (if fallback
+            (setcdr fallback existing)
+          (push (cons mode existing) agent-tui-desktop--fallback-handlers)))))
+  (setq desktop-buffer-mode-handlers
+        (cons (cons mode #'agent-tui-desktop--restore-buffer)
+              (seq-remove (lambda (entry) (eq (car entry) mode))
+                          desktop-buffer-mode-handlers))))
+
+(defun agent-tui-desktop--after-load (_file)
+  "Keep agent-tui Desktop handlers first after a library is loaded."
+  (when agent-tui-desktop-mode
+    (dolist (mode agent-tui-desktop--terminal-modes)
+      (agent-tui-desktop--install-handler mode))))
 
 (defun agent-tui-desktop--setup-buffer ()
   "Configure the current TUI buffer for Desktop saving."
@@ -93,9 +122,14 @@ DESKTOP-DIRECTORY is where Desktop writes its state."
 (defun agent-tui-desktop--restore-buffer
     (buffer-filename buffer-name buffer-misc)
   "Restore an agent-tui buffer from Desktop BUFFER-MISC.
-Non-agent terminal buffers are delegated to Desktop's default handler."
+Non-agent terminal buffers are delegated to their displaced handler or
+Desktop's default handler."
   (if (not (eq (map-elt buffer-misc :agent-tui) t))
-      (desktop-restore-file-buffer buffer-filename buffer-name buffer-misc)
+      (let ((handler (cdr (assq desktop-buffer-major-mode
+                               agent-tui-desktop--fallback-handlers))))
+        (if handler
+            (funcall handler buffer-filename buffer-name buffer-misc)
+          (desktop-restore-file-buffer buffer-filename buffer-name buffer-misc)))
     (let* ((session-id (map-elt buffer-misc :session-id))
            (provider-value (map-elt buffer-misc :provider))
            (provider (or provider-value agent-tui-provider))
@@ -140,20 +174,27 @@ Non-agent terminal buffers are delegated to Desktop's default handler."
 (defun agent-tui-desktop--enable ()
   "Install Desktop integration hooks and handlers."
   (add-hook 'agent-tui-started-hook #'agent-tui-desktop--setup-buffer)
+  ;; A terminal package can add its handler later, while desktop.el is loading
+  ;; the mode for the first restored buffer.  Reassert our handler afterward.
+  (add-hook 'after-load-functions #'agent-tui-desktop--after-load)
   (dolist (mode agent-tui-desktop--terminal-modes)
-    (add-to-list 'desktop-buffer-mode-handlers
-                 (cons mode #'agent-tui-desktop--restore-buffer)))
+    (agent-tui-desktop--install-handler mode))
   (agent-tui-desktop--setup-existing-buffers))
 
 (defun agent-tui-desktop--disable ()
   "Remove Desktop integration hooks and handlers."
   (remove-hook 'agent-tui-started-hook #'agent-tui-desktop--setup-buffer)
-  (setq desktop-buffer-mode-handlers
-        (seq-remove
-         (lambda (entry)
-           (and (memq (car entry) agent-tui-desktop--terminal-modes)
-                (eq (cdr entry) #'agent-tui-desktop--restore-buffer)))
-         desktop-buffer-mode-handlers))
+  (remove-hook 'after-load-functions #'agent-tui-desktop--after-load)
+  (dolist (mode agent-tui-desktop--terminal-modes)
+    (setq desktop-buffer-mode-handlers
+          (seq-remove
+           (lambda (entry)
+             (and (eq (car entry) mode)
+                  (eq (cdr entry) #'agent-tui-desktop--restore-buffer)))
+           desktop-buffer-mode-handlers))
+    (when-let* ((fallback (assq mode agent-tui-desktop--fallback-handlers)))
+      (push fallback desktop-buffer-mode-handlers)))
+  (setq agent-tui-desktop--fallback-handlers nil)
   (agent-tui-desktop--clear-existing-buffers))
 
 ;;;###autoload

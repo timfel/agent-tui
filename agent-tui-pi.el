@@ -14,7 +14,22 @@
 
 (require 'cl-lib)
 (require 'subr-x)
-(require 'agent-tui)
+;; `agent-tui' eagerly loads its built-in providers.  Keep this guarded
+;; dependency for the autoload/standalone case, while avoiding a recursive
+;; eager load when this provider is the library that started the load.
+(defvar agent-tui--providers-being-loaded nil)
+(unless (featurep 'agent-tui)
+  (let ((agent-tui--providers-being-loaded
+         (cons 'agent-tui-pi agent-tui--providers-being-loaded)))
+    (require 'agent-tui)))
+
+(defvar agent-tui-provider)
+(declare-function agent-tui--command-prefix "agent-tui"
+                  (directory))
+(declare-function agent-tui--start-terminal "agent-tui"
+                  (command &optional prefix-key))
+(declare-function agent-tui-start "agent-tui"
+                  (&optional prefix-key sessionid))
 
 (defgroup agent-tui-pi nil
   "Pi integration for agent-tui."

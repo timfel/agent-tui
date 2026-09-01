@@ -7,10 +7,11 @@
 
 ;;; Commentary:
 ;;
-;; `agent-tui' is a small provider-neutral layer for running terminal UIs
-;; such as pi in an Emacs terminal emulator.  Providers are identified by a
-;; symbol and implement the four `agent-tui--*' generic methods below.  The
-;; public functions have the provider-neutral API:
+;; `agent-tui' is a small provider layer for running terminal UIs such as pi
+;; in an Emacs terminal emulator.  Providers are identified by a symbol and
+;; implement the four `agent-tui--*' generic methods below.  Built-in provider
+;; libraries are loaded at the end of this file.  The public functions have
+;; the provider-neutral API:
 ;;
 ;;   (agent-tui-start PREFIX-KEY SESSIONID)
 ;;   (agent-tui-started BUFFER)
@@ -99,6 +100,9 @@ records when the session was last started or resumed."
 Provider packages normally bind this dynamically in their public start
 command.  Setting it globally is also useful when there is only one provider
 in a configuration.")
+
+(defvar agent-tui--providers-being-loaded nil
+  "Provider libraries currently being loaded by `agent-tui'.")
 
 (defvar agent-tui-started-hook nil
   "Hook run in a buffer after generic agent TUI setup has completed.")
@@ -872,6 +876,15 @@ Multiple queued prompts are sent in queue order."
     (agent-tui--flush-prompt-queue))
   string)
 
+;; Mark the core feature as available before loading providers.  Provider
+;; libraries may require `agent-tui' when loaded directly; the loading list
+;; prevents that path from recursively loading the provider again here.
 (provide 'agent-tui)
+(dolist (provider '(agent-tui-pi))
+  (unless (or (featurep provider)
+              (memq provider agent-tui--providers-being-loaded))
+    (let ((agent-tui--providers-being-loaded
+           (cons provider agent-tui--providers-being-loaded)))
+      (require provider nil t))))
 
 ;;; agent-tui.el ends here
